@@ -55,6 +55,9 @@
         const my = e.clientY - rect.top;
         const newScale = Math.max(mermaidMinScale, Math.min(mermaidMaxScale, state.scale * factor));
         e.preventDefault();
+        if (newScale === state.scale) {
+          return;
+        }
         state.tx = mx - (mx - state.tx) * (newScale / state.scale);
         state.ty = my - (my - state.ty) * (newScale / state.scale);
         state.scale = newScale;
@@ -104,6 +107,7 @@
       element.addEventListener("pointermove", onPointerMove);
       element.addEventListener("pointerup", onPointerUp);
       element.addEventListener("pointercancel", onPointerUp);
+      resetBtn.setAttribute("type", "button");
       resetBtn.classList.add("mermaid-reset-btn");
       resetBtn.setAttribute("aria-label", "Reset diagram view");
       resetBtn.textContent = "Reset";
