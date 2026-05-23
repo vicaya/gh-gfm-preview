@@ -12,14 +12,103 @@
   const tickIcon = `<svg class="tick-icon" aria-hidden="true" fill="none" height="18" shape-rendering="geometricPrecision" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 24 24" width="18" style="color: "currentColor";"><path d="M5 13l4 4L19 7"></path></svg>`;
   let diagramMediaQuery;
 
-  function loadMermaid(isLight) {
+  async function loadMermaid(isLight) {
     const theme = (
       isLight
       ? "default"
       : "dark"
     );
     window.mermaid.initialize({startOnLoad: false, theme});
-    window.mermaid.run({querySelector: mermaidQuery});
+    await window.mermaid.run({querySelector: mermaidQuery});
+    setupMermaidPanZoom();
+  }
+
+  function setupMermaidPanZoom() {
+    document.querySelectorAll(mermaidQuery).forEach((element) => {
+      const svg = element.querySelector("svg");
+      if (!svg || svg.hasAttribute("data-panzoom")) {
+        return;
+      }
+      const pre = element.closest("pre");
+      const resetBtn = document.createElement("button");
+      const oldResetBtn = (
+        pre
+        ? pre.querySelector(".mermaid-reset-btn")
+        : null
+      );
+      const state = {dragging: false, lastX: 0, lastY: 0, scale: 1, tx: 0, ty: 0};
+      const applyTransform = () => {
+        svg.style.transform = `translate(${state.tx}px, ${state.ty}px) scale(${state.scale})`;
+      };
+      const onWheel = (e) => {
+        const rect = element.getBoundingClientRect();
+        const factor = (
+          e.deltaY < 0
+          ? 1.1
+          : 0.9
+        );
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const newScale = Math.max(0.2, Math.min(5, state.scale * factor));
+        e.preventDefault();
+        state.tx = mx - (mx - state.tx) * (newScale / state.scale);
+        state.ty = my - (my - state.ty) * (newScale / state.scale);
+        state.scale = newScale;
+        applyTransform();
+      };
+      const onMouseDown = (e) => {
+        state.dragging = true;
+        state.lastX = e.clientX;
+        state.lastY = e.clientY;
+        element.style.cursor = "grabbing";
+        e.preventDefault();
+      };
+      const onMouseMove = (e) => {
+        if (!state.dragging) {
+          return;
+        }
+        state.tx += e.clientX - state.lastX;
+        state.ty += e.clientY - state.lastY;
+        state.lastX = e.clientX;
+        state.lastY = e.clientY;
+        applyTransform();
+      };
+      const onMouseUp = () => {
+        if (!state.dragging) {
+          return;
+        }
+        state.dragging = false;
+        element.style.cursor = "grab";
+      };
+      const onReset = () => {
+        state.scale = 1;
+        state.tx = 0;
+        state.ty = 0;
+        applyTransform();
+      };
+      svg.setAttribute("data-panzoom", "true");
+      svg.style.transformOrigin = "0 0";
+      svg.style.display = "block";
+      if (pre) {
+        pre.classList.add("diagram-mermaid-pre");
+        pre.style.position = "relative";
+      }
+      element.classList.add("diagram-mermaid-code");
+      element.addEventListener("wheel", onWheel, {passive: false});
+      element.addEventListener("mousedown", onMouseDown);
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+      resetBtn.classList.add("mermaid-reset-btn");
+      resetBtn.setAttribute("aria-label", "Reset diagram view");
+      resetBtn.textContent = "Reset";
+      resetBtn.addEventListener("click", onReset);
+      if (oldResetBtn) {
+        oldResetBtn.remove();
+      }
+      if (pre) {
+        pre.appendChild(resetBtn);
+      }
+    });
   }
 
   function saveOriginalData(query) {
