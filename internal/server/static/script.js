@@ -5,6 +5,10 @@
   "use strict";
 
   const mermaidQuery = "code.language-mermaid";
+  const mermaidMinScale = 0.2;
+  const mermaidMaxScale = 5;
+  const mermaidZoomInFactor = 1.1;
+  const mermaidZoomOutFactor = 0.9;
   const geoJSONQuery = "code.language-geojson";
   const topoJSONQuery = "code.language-topojson";
   const mapQuery = `${geoJSONQuery}, ${topoJSONQuery}`;
@@ -44,26 +48,27 @@
         const rect = element.getBoundingClientRect();
         const factor = (
           e.deltaY < 0
-          ? 1.1
-          : 0.9
+          ? mermaidZoomInFactor
+          : mermaidZoomOutFactor
         );
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
-        const newScale = Math.max(0.2, Math.min(5, state.scale * factor));
+        const newScale = Math.max(mermaidMinScale, Math.min(mermaidMaxScale, state.scale * factor));
         e.preventDefault();
         state.tx = mx - (mx - state.tx) * (newScale / state.scale);
         state.ty = my - (my - state.ty) * (newScale / state.scale);
         state.scale = newScale;
         applyTransform();
       };
-      const onMouseDown = (e) => {
+      const onPointerDown = (e) => {
         state.dragging = true;
         state.lastX = e.clientX;
         state.lastY = e.clientY;
         element.style.cursor = "grabbing";
+        element.setPointerCapture(e.pointerId);
         e.preventDefault();
       };
-      const onMouseMove = (e) => {
+      const onPointerMove = (e) => {
         if (!state.dragging) {
           return;
         }
@@ -73,7 +78,7 @@
         state.lastY = e.clientY;
         applyTransform();
       };
-      const onMouseUp = () => {
+      const onPointerUp = () => {
         if (!state.dragging) {
           return;
         }
@@ -95,9 +100,10 @@
       }
       element.classList.add("diagram-mermaid-code");
       element.addEventListener("wheel", onWheel, {passive: false});
-      element.addEventListener("mousedown", onMouseDown);
-      document.addEventListener("mousemove", onMouseMove);
-      document.addEventListener("mouseup", onMouseUp);
+      element.addEventListener("pointerdown", onPointerDown);
+      element.addEventListener("pointermove", onPointerMove);
+      element.addEventListener("pointerup", onPointerUp);
+      element.addEventListener("pointercancel", onPointerUp);
       resetBtn.classList.add("mermaid-reset-btn");
       resetBtn.setAttribute("aria-label", "Reset diagram view");
       resetBtn.textContent = "Reset";
