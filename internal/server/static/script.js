@@ -9,12 +9,16 @@
   const mermaidMaxScale = 5;
   const mermaidZoomInFactor = 1.1;
   const mermaidZoomOutFactor = 0.9;
+  const mermaidOverlayPadding = 64;
   const geoJSONQuery = "code.language-geojson";
   const topoJSONQuery = "code.language-topojson";
   const mapQuery = `${geoJSONQuery}, ${topoJSONQuery}`;
   const copyIcon = `<svg class="copy-icon" aria-hidden="true" fill="none" height="18" shape-rendering="geometricPrecision" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 24 24" width="18" style="color:"currentColor";"><path d="M8 17.929H6c-1.105 0-2-.912-2-2.036V5.036C4 3.91 4.895 3 6 3h8c1.105 0 2 .911 2 2.036v1.866m-6 .17h8c1.105 0 2 .91 2 2.035v10.857C20 21.09 19.105 22 18 22h-8c-1.105 0-2-.911-2-2.036V9.107c0-1.124.895-2.036 2-2.036z"></path></svg>`;
   const tickIcon = `<svg class="tick-icon" aria-hidden="true" fill="none" height="18" shape-rendering="geometricPrecision" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 24 24" width="18" style="color: "currentColor";"><path d="M5 13l4 4L19 7"></path></svg>`;
+  const expandIcon = `<svg class="expand-icon" aria-hidden="true" viewBox="0 0 16 16" width="16" height="16"><path d="M1.75 1h4a.75.75 0 0 1 0 1.5H3.56L7 5.94a.75.75 0 1 1-1.06 1.06L2.5 3.56v2.19a.75.75 0 0 1-1.5 0v-3.5C1 1.784 1.784 1 2.75 1ZM9.28 3.72a.749.749 0 0 1 1.06 0L13.5 6.94V4.75a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 13.25 10h-3.5a.75.75 0 0 1 0-1.5h2.19L8.22 4.78a.75.75 0 0 1 0-1.06ZM2.75 11a.75.75 0 0 1 .75.75v2.19l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L4.56 14.5H6.75a.75.75 0 0 1 0 1.5h-3.5A1.75 1.75 0 0 1 1.5 14.25v-3.5a.75.75 0 0 1 .75-.75ZM13.5 9.75a.75.75 0 0 1 1.5 0v4a.75.75 0 0 1-.75.75h-4a.75.75 0 0 1 0-1.5h2.19l-3.22-3.22a.749.749 0 0 1 .326-1.275.749.749 0 0 1 .734.215L13.5 11.94Z"></path></svg>`;
   let diagramMediaQuery;
+  let overlayCleanup;
+  let overlayEl;
 
   async function loadMermaid(isLight) {
     const theme = (
@@ -27,6 +31,149 @@
     setupMermaidPanZoom();
   }
 
+  function attachPanZoom(element, svg) {
+    const state = {dragging: false, lastX: 0, lastY: 0, scale: 1, tx: 0, ty: 0};
+    const applyTransform = () => {
+      svg.style.transform = `translate(${state.tx}px, ${state.ty}px) scale(${state.scale})`;
+    };
+    const onWheel = (e) => {
+      const rect = element.getBoundingClientRect();
+      const factor = (
+        e.deltaY < 0
+        ? mermaidZoomInFactor
+        : mermaidZoomOutFactor
+      );
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const newScale = Math.max(mermaidMinScale, Math.min(mermaidMaxScale, state.scale * factor));
+      e.preventDefault();
+      if (newScale === state.scale) {
+        return;
+      }
+      state.tx = mx - (mx - state.tx) * (newScale / state.scale);
+      state.ty = my - (my - state.ty) * (newScale / state.scale);
+      state.scale = newScale;
+      applyTransform();
+    };
+    const onPointerDown = (e) => {
+      if (e.button !== 0) {
+        return;
+      }
+      state.dragging = true;
+      state.lastX = e.clientX;
+      state.lastY = e.clientY;
+      element.style.cursor = "grabbing";
+      element.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    };
+    const onPointerMove = (e) => {
+      if (!state.dragging) {
+        return;
+      }
+      state.tx += e.clientX - state.lastX;
+      state.ty += e.clientY - state.lastY;
+      state.lastX = e.clientX;
+      state.lastY = e.clientY;
+      applyTransform();
+    };
+    const onPointerUp = () => {
+      if (!state.dragging) {
+        return;
+      }
+      state.dragging = false;
+      element.style.cursor = "grab";
+    };
+    const detach = () => {
+      element.removeEventListener("wheel", onWheel);
+      element.removeEventListener("pointerdown", onPointerDown);
+      element.removeEventListener("pointermove", onPointerMove);
+      element.removeEventListener("pointerup", onPointerUp);
+      element.removeEventListener("pointercancel", onPointerUp);
+    };
+    element.addEventListener("wheel", onWheel, {passive: false});
+    element.addEventListener("pointerdown", onPointerDown);
+    element.addEventListener("pointermove", onPointerMove);
+    element.addEventListener("pointerup", onPointerUp);
+    element.addEventListener("pointercancel", onPointerUp);
+    return {applyTransform, detach, state};
+  }
+
+  function openMermaidOverlay(originalSvg) {
+    if (overlayCleanup) {
+      overlayCleanup();
+    }
+    if (!overlayEl) {
+      overlayEl = document.createElement("div");
+      overlayEl.classList.add("mermaid-overlay");
+      overlayEl.setAttribute("role", "dialog");
+      overlayEl.setAttribute("aria-modal", "true");
+      overlayEl.setAttribute("aria-label", "Diagram fullscreen view");
+      document.body.appendChild(overlayEl);
+    }
+    const svgClone = originalSvg.cloneNode(true);
+    svgClone.removeAttribute("data-panzoom");
+    svgClone.style.transform = "";
+    svgClone.style.transformOrigin = "0 0";
+    svgClone.style.display = "block";
+    const inner = document.createElement("div");
+    inner.classList.add("mermaid-overlay-inner");
+    inner.appendChild(svgClone);
+    const closeBtn = document.createElement("button");
+    closeBtn.setAttribute("type", "button");
+    closeBtn.classList.add("mermaid-overlay-close");
+    closeBtn.setAttribute("aria-label", "Close fullscreen view");
+    closeBtn.textContent = "×";
+    const resetBtn = document.createElement("button");
+    resetBtn.setAttribute("type", "button");
+    resetBtn.classList.add("mermaid-reset-btn");
+    resetBtn.setAttribute("aria-label", "Reset diagram view");
+    resetBtn.textContent = "Reset";
+    overlayEl.innerHTML = "";
+    overlayEl.appendChild(inner);
+    overlayEl.appendChild(closeBtn);
+    overlayEl.appendChild(resetBtn);
+    const panZoom = attachPanZoom(inner, svgClone);
+    document.body.style.overflow = "hidden";
+    overlayEl.classList.add("is-open");
+    const innerRect = inner.getBoundingClientRect();
+    const svgRect = svgClone.getBoundingClientRect();
+    if (svgRect.width > 0 && svgRect.height > 0) {
+      const fitScale = Math.min(
+        1,
+        (innerRect.width - mermaidOverlayPadding) / svgRect.width,
+        (innerRect.height - mermaidOverlayPadding) / svgRect.height
+      );
+      panZoom.state.scale = fitScale;
+      panZoom.state.tx = (innerRect.width - svgRect.width * fitScale) / 2;
+      panZoom.state.ty = (innerRect.height - svgRect.height * fitScale) / 2;
+      panZoom.applyTransform();
+    }
+    const initScale = panZoom.state.scale;
+    const initTx = panZoom.state.tx;
+    const initTy = panZoom.state.ty;
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") {
+        closeOverlay();
+      }
+    };
+    const closeOverlay = () => {
+      overlayEl.classList.remove("is-open");
+      document.body.style.overflow = "";
+      document.removeEventListener("keydown", onKeyDown);
+      panZoom.detach();
+      overlayCleanup = null;
+    };
+    resetBtn.addEventListener("click", () => {
+      panZoom.state.scale = initScale;
+      panZoom.state.tx = initTx;
+      panZoom.state.ty = initTy;
+      panZoom.applyTransform();
+    });
+    closeBtn.addEventListener("click", closeOverlay);
+    document.addEventListener("keydown", onKeyDown);
+    overlayCleanup = closeOverlay;
+  }
+
   function setupMermaidPanZoom() {
     document.querySelectorAll(mermaidQuery).forEach((element) => {
       const svg = element.querySelector("svg");
@@ -34,69 +181,19 @@
         return;
       }
       const pre = element.closest("pre");
-      const resetBtn = document.createElement("button");
       const oldResetBtn = (
         pre
         ? pre.querySelector(".mermaid-reset-btn")
         : null
       );
-      const state = {dragging: false, lastX: 0, lastY: 0, scale: 1, tx: 0, ty: 0};
-      const applyTransform = () => {
-        svg.style.transform = `translate(${state.tx}px, ${state.ty}px) scale(${state.scale})`;
-      };
-      const onWheel = (e) => {
-        const rect = element.getBoundingClientRect();
-        const factor = (
-          e.deltaY < 0
-          ? mermaidZoomInFactor
-          : mermaidZoomOutFactor
-        );
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-        const newScale = Math.max(mermaidMinScale, Math.min(mermaidMaxScale, state.scale * factor));
-        e.preventDefault();
-        if (newScale === state.scale) {
-          return;
-        }
-        state.tx = mx - (mx - state.tx) * (newScale / state.scale);
-        state.ty = my - (my - state.ty) * (newScale / state.scale);
-        state.scale = newScale;
-        applyTransform();
-      };
-      const onPointerDown = (e) => {
-        if (e.button !== 0) {
-          return;
-        }
-        state.dragging = true;
-        state.lastX = e.clientX;
-        state.lastY = e.clientY;
-        element.style.cursor = "grabbing";
-        element.setPointerCapture(e.pointerId);
-        e.preventDefault();
-      };
-      const onPointerMove = (e) => {
-        if (!state.dragging) {
-          return;
-        }
-        state.tx += e.clientX - state.lastX;
-        state.ty += e.clientY - state.lastY;
-        state.lastX = e.clientX;
-        state.lastY = e.clientY;
-        applyTransform();
-      };
-      const onPointerUp = () => {
-        if (!state.dragging) {
-          return;
-        }
-        state.dragging = false;
-        element.style.cursor = "grab";
-      };
-      const onReset = () => {
-        state.scale = 1;
-        state.tx = 0;
-        state.ty = 0;
-        applyTransform();
-      };
+      const oldExpandBtn = (
+        pre
+        ? pre.querySelector(".mermaid-expand-btn")
+        : null
+      );
+      const panZoom = attachPanZoom(element, svg);
+      const resetBtn = document.createElement("button");
+      const expandBtn = document.createElement("button");
       svg.setAttribute("data-panzoom", "true");
       svg.style.transformOrigin = "0 0";
       svg.style.display = "block";
@@ -105,21 +202,30 @@
         pre.style.position = "relative";
       }
       element.classList.add("diagram-mermaid-code");
-      element.addEventListener("wheel", onWheel, {passive: false});
-      element.addEventListener("pointerdown", onPointerDown);
-      element.addEventListener("pointermove", onPointerMove);
-      element.addEventListener("pointerup", onPointerUp);
-      element.addEventListener("pointercancel", onPointerUp);
       resetBtn.setAttribute("type", "button");
       resetBtn.classList.add("mermaid-reset-btn");
       resetBtn.setAttribute("aria-label", "Reset diagram view");
       resetBtn.textContent = "Reset";
-      resetBtn.addEventListener("click", onReset);
+      resetBtn.addEventListener("click", () => {
+        panZoom.state.scale = 1;
+        panZoom.state.tx = 0;
+        panZoom.state.ty = 0;
+        panZoom.applyTransform();
+      });
+      expandBtn.setAttribute("type", "button");
+      expandBtn.classList.add("mermaid-expand-btn");
+      expandBtn.setAttribute("aria-label", "Expand diagram to full screen");
+      expandBtn.innerHTML = expandIcon;
+      expandBtn.addEventListener("click", () => openMermaidOverlay(svg));
       if (oldResetBtn) {
         oldResetBtn.remove();
       }
+      if (oldExpandBtn) {
+        oldExpandBtn.remove();
+      }
       if (pre) {
         pre.appendChild(resetBtn);
+        pre.appendChild(expandBtn);
       }
     });
   }
