@@ -64,6 +64,9 @@
         applyTransform();
       };
       const onPointerDown = (e) => {
+        if (e.button !== 0) {
+          return;
+        }
         state.dragging = true;
         state.lastX = e.clientX;
         state.lastY = e.clientY;
@@ -300,34 +303,32 @@
     }).catch(console.error);
   }
 
-  function initMermaid() {
+  async function initMermaid() {
     // Workaround issue with MermaidJS that doesn't allow changing theme on
     // re-initialization
     // https://github.com/mermaid-js/mermaid/issues/1945#issuecomment-1661264708
     saveOriginalData(mermaidQuery).catch(console.error);
 
     if (window.Param.mode === "dark") {
-      loadMermaid(false);
+      await loadMermaid(false);
     } else if (window.Param.mode === "light") {
-      loadMermaid(true);
+      await loadMermaid(true);
     } else {
       if (!diagramMediaQuery) {
         diagramMediaQuery = window.matchMedia("(prefers-color-scheme: light)");
       }
-      loadMermaid(diagramMediaQuery.matches);
+      await loadMermaid(diagramMediaQuery.matches);
       if (!diagramMediaQuery.codexListenerAdded) {
         diagramMediaQuery.addEventListener("change", (e) => {
-          resetProcessed(mermaidQuery).then(() => {
-            loadMermaid(e.matches);
-          }).catch(console.error);
+          resetProcessed(mermaidQuery).then(() => loadMermaid(e.matches)).catch(console.error);
         });
         diagramMediaQuery.codexListenerAdded = true;
       }
     }
   }
 
-  function renderDiagrams() {
-    initMermaid();
+  async function renderDiagrams() {
+    await initMermaid();
     document.querySelectorAll(mapQuery).forEach((element) => {
       element.removeAttribute("data-processed");
     });
@@ -346,7 +347,7 @@
 
     updateHeadingsList(result.headings_html, result.has_headings);
 
-    renderDiagrams();
+    await renderDiagrams();
     await typesetMathJax();
     addCopyButtons();
   }
